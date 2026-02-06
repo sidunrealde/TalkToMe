@@ -1,5 +1,5 @@
 # Core Pipecat
-pipecat-ai[groq,silero]>=0.0.100
+pipecat-ai[whisper,silero]>=0.0.100
 
 # WebRTC transport
 # smallwebrtc>=0.1.0

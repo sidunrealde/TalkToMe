@@ -8,12 +8,13 @@ A conversational AI avatar web application that brings portrait images to life w
 ## ✨ Features
 
 - 🎭 **Realistic Lip-Sync** - Animate any portrait photo with accurate mouth movements
-- 🎤 **Speech-to-Text** - Real-time transcription with Groq Whisper
-- 🤖 **LLM Conversations** - Powered by Ollama (local) or any OpenAI-compatible API
-- 🔊 **Natural TTS** - High-quality voice synthesis with Kokoro TTS
-- 🎯 **Voice Activity Detection** - Smart interruption handling
+- 🎤 **Speech-to-Text** - Local transcription with Whisper (faster-whisper)
+- 🤖 **LLM Conversations** - Powered by Ollama (fully local)
+- 🔊 **Natural TTS** - High-quality voice synthesis with Kokoro TTS (local)
+- 🎯 **Voice Activity Detection** - Smart interruption handling (Silero VAD)
 - 🌐 **Network Access** - HTTPS support for accessing from other devices
 - 🎨 **Multiple Voices** - Choose from various voice options
+- 🔒 **100% Local** - All AI runs on your machine, no cloud APIs required
 
 ---
 
@@ -28,11 +29,43 @@ A conversational AI avatar web application that brings portrait images to life w
 - Python 3.10+
 - NVIDIA CUDA Toolkit 12.x
 - Ollama (for local LLM)
-- Groq API key (for STT)
+- ~3GB VRAM for Whisper large-v3-turbo model
+
+> **Note:** This project runs entirely locally - no cloud APIs or internet required for AI features.
 
 ---
 
 ## 🚀 Quick Start
+
+### Automated Setup (Recommended)
+
+**Windows:**
+```powershell
+git clone https://github.com/yourusername/TalkToMe.git
+cd TalkToMe
+.\start.ps1
+```
+Or simply double-click `start.bat`
+
+**Linux/Mac:**
+```bash
+git clone https://github.com/yourusername/TalkToMe.git
+cd TalkToMe
+chmod +x start.sh
+./start.sh
+```
+
+The script will automatically:
+- Create a Python virtual environment
+- Install PyTorch with CUDA support
+- Install all dependencies
+- Download Ditto model checkpoints (~3GB)
+- Check Ollama status
+- Launch the application
+
+---
+
+### Manual Setup
 
 ### Step 1: Clone the Repository
 
@@ -108,13 +141,16 @@ ollama pull mistral:7b
 # Copy example config
 cp .env.example .env
 
-# Edit .env with your settings
+# Edit .env with your settings (optional - defaults work out of box)
 ```
 
-Edit `.env` file:
+Edit `.env` file (all settings are optional with good defaults):
 ```env
-# Required: Get your API key from https://console.groq.com
-GROQ_API_KEY=your_groq_api_key_here
+# Local Whisper STT Settings
+# Models: tiny, base, small, medium, large-v2, large-v3, large-v3-turbo, distil-medium.en
+WHISPER_MODEL=large-v3-turbo
+WHISPER_DEVICE=cuda
+WHISPER_COMPUTE_TYPE=float16
 
 # Ollama Configuration
 OLLAMA_BASE_URL=http://localhost:11434
@@ -224,11 +260,25 @@ TalkToMe/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `GROQ_API_KEY` | Groq API key for STT | **Required** |
+| `WHISPER_MODEL` | Whisper model for STT | `large-v3-turbo` |
+| `WHISPER_DEVICE` | Device for Whisper (`cuda`/`cpu`) | `cuda` |
+| `WHISPER_COMPUTE_TYPE` | Compute precision | `float16` |
 | `OLLAMA_BASE_URL` | Ollama server URL | `http://localhost:11434` |
 | `OLLAMA_MODEL` | LLM model name | `mistral:7b` |
 | `HOST` | Server bind address | `0.0.0.0` |
 | `PORT` | Server port | `8765` |
+
+### Whisper Model Options
+
+| Model | VRAM | Speed | Quality | Notes |
+|-------|------|-------|---------|-------|
+| `tiny` | ~1GB | Fastest | Basic | Quick testing |
+| `base` | ~1GB | Fast | Fair | Light usage |
+| `small` | ~2GB | Medium | Good | Balanced |
+| `medium` | ~5GB | Slower | Better | Higher quality |
+| `large-v3-turbo` | ~3GB | Fast | Excellent | ✅ Recommended for RTX 3090 |
+| `large-v3` | ~6GB | Slowest | Best | Maximum accuracy |
+| `distil-medium.en` | ~2GB | Fast | Good | English only, efficient |
 
 ### Ditto Backend Options
 
@@ -312,10 +362,13 @@ For best results, use avatar images that:
 - **[Pipecat](https://github.com/pipecat-ai/pipecat)** - Real-time conversation orchestration
 - **[Ditto TalkingHead](https://github.com/digital-avatar/ditto)** - Audio-driven facial animation
 - **[Ollama](https://ollama.ai)** - Local LLM inference
-- **[Groq](https://groq.com)** - Fast STT (Whisper)
+- **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** - Local STT (Whisper)
 - **[Kokoro TTS](https://github.com/hexgrad/kokoro)** - High-quality text-to-speech
+- **[Silero VAD](https://github.com/snakers4/silero-vad)** - Voice activity detection
 - **[FastAPI](https://fastapi.tiangolo.com)** - Web server
 - **[WebRTC](https://webrtc.org)** - Real-time audio/video streaming
+
+> 🔒 **Privacy:** All AI processing runs locally on your machine. No data is sent to external servers.
 
 ---
 

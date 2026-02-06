@@ -50,8 +50,8 @@ VOICE_MAP = {
     # British Male  
     "bm_george": "bm_george",
     "bm_lewis": "bm_lewis",
-    # Simple aliases
-    "autumn": "af_heart",  # Map Groq voice names to Kokoro
+    # Simple aliases for common voice names
+    "autumn": "af_heart",
     "breeze": "af_bella",
     "ember": "am_adam",
     "juniper": "af_sarah",

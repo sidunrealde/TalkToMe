@@ -7,8 +7,8 @@ from typing import Optional, Callable
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.services.groq.stt import GroqSTTService
-from pipecat.services.groq.tts import GroqTTSService
+from pipecat.services.whisper.stt import WhisperSTTService, Model
+from pipecat.transcriptions.language import Language
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
@@ -26,7 +26,6 @@ from pipecat.frames.frames import (
 )
 
 from .config import config
-from .services.ditto_video import DittoVideoService
 from .services.ditto_realtime import DittoRealtimeService
 from .services.static_avatar import StaticAvatarService
 from .services.kokoro_tts import KokoroTTSService
@@ -281,13 +280,19 @@ async def create_pipeline(
     """Create the full conversation pipeline."""
     logger.info("Creating conversation pipeline...")
     
-    # Speech-to-text
-    logger.debug(f"Creating GroqSTTService with API key: {config.groq_api_key[:10]}...")
-    stt = GroqSTTService(
-        api_key=config.groq_api_key,
-        model="whisper-large-v3"
+    # Speech-to-text (Local Whisper via faster-whisper)
+    whisper_model = config.whisper_model
+    if hasattr(Model, whisper_model.upper()):
+        whisper_model = getattr(Model, whisper_model.upper())
+    logger.debug(f"Creating local WhisperSTTService with model: {whisper_model}")
+    stt = WhisperSTTService(
+        model=whisper_model,
+        device=config.whisper_device,
+        compute_type=config.whisper_compute_type,
+        language=Language.EN,
+        no_speech_prob=0.3,
     )
-    logger.debug("STT service created")
+    logger.debug("STT service created (local Whisper)")
     
     # LLM
     logger.debug(f"Creating OllamaLLMService with model: {config.ollama_model}")

@@ -9,7 +9,7 @@ setup(
     package_dir={"": "src"},
     python_requires=">=3.10",
     install_requires=[
-        "pipecat-ai[groq,silero]>=0.0.102",
+        "pipecat-ai[whisper,silero]>=0.0.102",
         "smallwebrtc>=0.1.0",
         "fastapi>=0.109.0",
         "uvicorn[standard]>=0.27.0",
