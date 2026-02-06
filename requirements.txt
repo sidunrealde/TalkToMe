@@ -1,0 +1,32 @@
+# Core Pipecat
+pipecat-ai[groq,silero]>=0.0.100
+
+# WebRTC transport
+# smallwebrtc>=0.1.0
+
+# Web server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Audio processing
+librosa>=0.10.0
+soundfile>=0.12.0
+numpy>=1.24.0
+
+# Ditto dependencies
+onnxruntime-gpu>=1.16.0
+safetensors>=0.4.0
+opencv-python>=4.8.0
+pillow>=10.0.0
+scipy>=1.11.0
+
+# HTTP client for Ollama
+httpx>=0.26.0
+
+# Environment management
+python-dotenv>=1.0.0
+
+# Development
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

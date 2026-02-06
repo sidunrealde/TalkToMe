@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Avatar</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AI Avatar</h1>
+        </header>
+        
+        <main>
+            <!-- Avatar Display -->
+            <div class="avatar-container">
+                <video id="avatar-video" autoplay playsinline></video>
+                <img id="avatar-image" src="" alt="Avatar">
+                <div id="avatar-placeholder">
+                    <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                        <circle cx="12" cy="7" r="4"/>
+                    </svg>
+                    <p>Upload an avatar to begin</p>
+                </div>
+                <!-- State overlay indicators on avatar -->
+                <div id="avatar-state-overlay" class="hidden">
+                    <div class="state-indicator" id="state-listening">
+                        <div class="pulse-ring"></div>
+                        <span>🎤 Listening...</span>
+                    </div>
+                    <div class="state-indicator" id="state-thinking">
+                        <div class="thinking-dots"><span></span><span></span><span></span></div>
+                        <span>Thinking...</span>
+                    </div>
+                    <div class="state-indicator" id="state-speaking">
+                        <div class="sound-wave">
+                            <span></span><span></span><span></span><span></span><span></span>
+                        </div>
+                        <span>Speaking...</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Audio Level Meter -->
+            <div class="audio-meter-container">
+                <label>🎤 Mic Level:</label>
+                <div class="audio-meter">
+                    <div class="audio-meter-bar" id="audio-meter-bar"></div>
+                </div>
+                <span id="audio-level-text">0%</span>
+            </div>
+            
+            <!-- Controls -->
+            <div class="controls">
+                <!-- Avatar Upload -->
+                <div class="control-group">
+                    <label for="avatar-upload">Avatar Image:</label>
+                    <input type="file" id="avatar-upload" accept="image/*">
+                </div>
+                
+                <!-- Voice Selection -->
+                <div class="control-group">
+                    <label for="voice-select">Voice:</label>
+                    <select id="voice-select">
+                        <option value="autumn">Autumn</option>
+                        <option value="breeze">Breeze</option>
+                        <option value="ember">Ember</option>
+                        <option value="juniper">Juniper</option>
+                    </select>
+                </div>
+                
+                <!-- Connection -->
+                <div class="control-group">
+                    <button id="connect-btn" class="primary">Connect</button>
+                    <button id="disconnect-btn" disabled>Disconnect</button>
+                </div>
+            </div>
+            
+            <!-- Connection Status -->
+            <div class="status">
+                <span id="connection-status" class="status-disconnected">⚫ Disconnected</span>
+            </div>
+            
+            <!-- Text Input -->
+            <div class="text-input-container">
+                <input type="text" id="text-input" placeholder="Type a message..." disabled>
+                <button id="send-btn" disabled>Send</button>
+            </div>
+            
+            <!-- Conversation Display with real-time transcription -->
+            <div class="conversation-container">
+                <h3>Conversation</h3>
+                <div class="conversation" id="conversation">
+                    <div class="empty-state">Start a conversation by connecting and speaking or typing...</div>
+                </div>
+                <!-- Live transcription indicator -->
+                <div id="live-transcription" class="live-transcription hidden">
+                    <span class="transcribing-indicator">●</span>
+                    <span id="live-text"></span>
+                </div>
+            </div>
+            
+            <!-- Debug Log -->
+            <details>
+                <summary>Debug Log</summary>
+                <div class="transcript" id="transcript"></div>
+            </details>
+        </main>
+    </div>
+    
+    <script src="/static/app.js"></script>
+</body>
+</html>
