@@ -33,25 +33,86 @@ KOKORO_MODEL_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/downloa
 KOKORO_VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
 
 # Voice mapping from simple names to Kokoro voice IDs
-# See: https://github.com/thewh1teagle/kokoro-onnx for full list
+# Full list at: https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
 VOICE_MAP = {
+    # === American English (11F 9M) ===
     # American Female
-    "af_heart": "af_heart",
-    "af_bella": "af_bella",
-    "af_nicole": "af_nicole",
+    "af_heart": "af_heart",      # ❤️ Top quality
+    "af_alloy": "af_alloy",
+    "af_aoede": "af_aoede",
+    "af_bella": "af_bella",      # 🔥 High quality
+    "af_jessica": "af_jessica",
+    "af_kore": "af_kore",
+    "af_nicole": "af_nicole",    # 🎧
+    "af_nova": "af_nova",
+    "af_river": "af_river",
     "af_sarah": "af_sarah",
     "af_sky": "af_sky",
     # American Male
     "am_adam": "am_adam",
+    "am_echo": "am_echo",
+    "am_eric": "am_eric",
+    "am_fenrir": "am_fenrir",
+    "am_liam": "am_liam",
     "am_michael": "am_michael",
+    "am_onyx": "am_onyx",
+    "am_puck": "am_puck",
+    "am_santa": "am_santa",
+    
+    # === British English (4F 4M) ===
     # British Female
+    "bf_alice": "bf_alice",
     "bf_emma": "bf_emma",
     "bf_isabella": "bf_isabella",
-    # British Male  
+    "bf_lily": "bf_lily",
+    # British Male
+    "bm_daniel": "bm_daniel",
+    "bm_fable": "bm_fable",
     "bm_george": "bm_george",
     "bm_lewis": "bm_lewis",
-    # Simple aliases
-    "autumn": "af_heart",  # Map Groq voice names to Kokoro
+    
+    # === Japanese (4F 1M) ===
+    "jf_alpha": "jf_alpha",
+    "jf_gongitsune": "jf_gongitsune",
+    "jf_nezumi": "jf_nezumi",
+    "jf_tebukuro": "jf_tebukuro",
+    "jm_kumo": "jm_kumo",
+    
+    # === Mandarin Chinese (4F 4M) ===
+    "zf_xiaobei": "zf_xiaobei",
+    "zf_xiaoni": "zf_xiaoni",
+    "zf_xiaoxiao": "zf_xiaoxiao",
+    "zf_xiaoyi": "zf_xiaoyi",
+    "zm_yunjian": "zm_yunjian",
+    "zm_yunxi": "zm_yunxi",
+    "zm_yunxia": "zm_yunxia",
+    "zm_yunyang": "zm_yunyang",
+    
+    # === Spanish (1F 2M) ===
+    "ef_dora": "ef_dora",
+    "em_alex": "em_alex",
+    "em_santa": "em_santa",
+    
+    # === French (1F) ===
+    "ff_siwis": "ff_siwis",
+    
+    # === Hindi (2F 2M) ===
+    "hf_alpha": "hf_alpha",
+    "hf_beta": "hf_beta",
+    "hm_omega": "hm_omega",
+    "hm_psi": "hm_psi",
+    
+    # === Italian (1F 1M) ===
+    "if_sara": "if_sara",
+    "im_nicola": "im_nicola",
+    
+    # === Brazilian Portuguese (1F 2M) ===
+    "pf_dora": "pf_dora",
+    "pm_alex": "pm_alex",
+    "pm_santa": "pm_santa",
+    
+    # === Legacy aliases (for backwards compatibility) ===
+    "autumn": "af_heart",
     "breeze": "af_bella",
     "ember": "am_adam",
     "juniper": "af_sarah",
@@ -161,7 +222,7 @@ class KokoroTTSService(FrameProcessor):
             
     async def _generate_tts(self, text: str):
         """Generate TTS audio from text using Kokoro."""
-        logger.info(f"Generating TTS for: {text[:50]}...")
+        logger.info(f"Generating TTS for: {text[:50]}... using voice: {self._voice}")
         
         if not self._kokoro:
             logger.error("Kokoro model not loaded!")
@@ -171,15 +232,26 @@ class KokoroTTSService(FrameProcessor):
             # Signal TTS started
             await self.push_frame(TTSStartedFrame())
             
-            # Generate audio using Kokoro's streaming API
-            # Run in executor to not block the event loop
-            loop = asyncio.get_event_loop()
+            # Determine language based on voice prefix
+            voice_lang_map = {
+                'a': 'en-us',  # American English
+                'b': 'en-gb',  # British English
+                'j': 'ja',     # Japanese
+                'z': 'zh',     # Mandarin Chinese
+                'e': 'es',     # Spanish
+                'f': 'fr-fr',  # French
+                'h': 'hi',     # Hindi
+                'i': 'it',     # Italian
+                'p': 'pt-br',  # Brazilian Portuguese
+            }
+            lang = voice_lang_map.get(self._voice[0], 'en-us') if self._voice else 'en-us'
+            logger.info(f"Using language: {lang} for voice: {self._voice}")
             
             # Use create_stream for async streaming
             stream = self._kokoro.create_stream(
                 text, 
                 voice=self._voice, 
-                lang="en-us",
+                lang=lang,
                 speed=1.0
             )
             

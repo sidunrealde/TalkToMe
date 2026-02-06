@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Store connections by pc_id
 pcs_map: Dict[str, SmallWebRTCConnection] = {}
 pipeline_tasks: Dict[str, "PipelineTask"] = {}
+tts_services: Dict[str, "KokoroTTSService"] = {}  # Store TTS services by pc_id
 
 avatar_manager = AvatarManager()
 
@@ -70,14 +71,15 @@ async def run_pipeline(webrtc_connection: SmallWebRTCConnection):
         )
         
         logger.debug("Transport created, creating pipeline...")
-        task = await create_pipeline(
+        task, tts = await create_pipeline(
             transport, 
             avatar_manager, 
             webrtc_connection=webrtc_connection
         )
         
-        # Store task reference for text input
+        # Store task and TTS service references for voice changes
         pipeline_tasks[webrtc_connection.pc_id] = task
+        tts_services[webrtc_connection.pc_id] = tts
         
         logger.debug("Pipeline created, starting runner...")
         runner = PipelineRunner()
@@ -87,8 +89,9 @@ async def run_pipeline(webrtc_connection: SmallWebRTCConnection):
     except Exception as e:
         logger.error(f"Pipeline error: {e}", exc_info=True)
     finally:
-        # Cleanup task reference
+        # Cleanup task and TTS references
         pipeline_tasks.pop(webrtc_connection.pc_id, None)
+        tts_services.pop(webrtc_connection.pc_id, None)
 
 
 @asynccontextmanager
@@ -149,16 +152,28 @@ async def upload_avatar(file: UploadFile = File(...)):
 @app.post("/api/voice")
 async def set_voice(voice: str = Form(...)):
     """Set the TTS voice."""
-    logger.info(f"Setting voice to: {voice}")
+    logger.info(f"=== VOICE CHANGE REQUEST ===")
+    logger.info(f"Received voice: {voice}")
+    logger.info(f"Active TTS services: {list(tts_services.keys())}")
+    
     avatar_manager.set_voice(voice)
+    logger.info(f"Avatar manager voice updated to: {avatar_manager.current_voice}")
+    
+    # Update all active TTS services
+    for pc_id, tts in tts_services.items():
+        logger.info(f"Updating TTS voice for connection {pc_id}: {tts._voice} -> {voice}")
+        tts.set_voice(voice)
+        logger.info(f"TTS voice after update: {tts._voice}")
+    
     return {"status": "success", "voice": avatar_manager.current_voice}
 
 
 @app.get("/api/voices")
 async def get_voices():
     """Get available TTS voices."""
+    from .services.kokoro_tts import VOICE_MAP
     return {
-        "voices": ["autumn", "breeze", "ember", "juniper"],
+        "voices": list(VOICE_MAP.keys()),
         "current": avatar_manager.current_voice
     }
 

@@ -14,7 +14,8 @@ class AvatarManager:
         self._avatars_dir = avatars_dir
         self._current_avatar: Optional[np.ndarray] = None
         self._current_avatar_path: Optional[str] = None
-        self._current_voice: str = "autumn"
+        self._current_voice: str = "af_heart"  # Default to Kokoro's top quality voice
+        self._voice_change_callback = None  # Callback to notify TTS service of voice changes
         
         os.makedirs(avatars_dir, exist_ok=True)
         
@@ -26,15 +27,20 @@ class AvatarManager:
     def current_voice(self) -> str:
         return self._current_voice
     
+    def set_voice_change_callback(self, callback):
+        """Set a callback to be called when voice changes."""
+        self._voice_change_callback = callback
+    
     def get_avatar_path(self) -> Optional[str]:
         """Get the file path of the current avatar."""
         return self._current_avatar_path
     
     def set_voice(self, voice: str):
-        """Set the TTS voice."""
-        valid_voices = ["autumn", "breeze", "ember", "juniper"]
-        if voice in valid_voices:
-            self._current_voice = voice
+        """Set the TTS voice. Accepts any Kokoro voice ID."""
+        self._current_voice = voice
+        # Notify TTS service of voice change
+        if self._voice_change_callback:
+            self._voice_change_callback(voice)
             
     def load_avatar_from_path(self, path: str) -> bool:
         """Load avatar image from file path."""

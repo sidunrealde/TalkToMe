@@ -8,7 +8,6 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.services.groq.stt import GroqSTTService
-from pipecat.services.groq.tts import GroqTTSService
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
@@ -26,7 +25,6 @@ from pipecat.frames.frames import (
 )
 
 from .config import config
-from .services.ditto_video import DittoVideoService
 from .services.ditto_realtime import DittoRealtimeService
 from .services.static_avatar import StaticAvatarService
 from .services.kokoro_tts import KokoroTTSService
@@ -117,6 +115,72 @@ class OllamaLLMService(FrameProcessor):
             self._generating = False
 
 
+class UserInputForwarder(FrameProcessor):
+    """Forwards user input events (transcriptions, speaking state) to the client."""
+    
+    def __init__(self, send_message_callback: Callable, **kwargs):
+        super().__init__(**kwargs)
+        self._send_message = send_message_callback
+        
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        
+        # Forward user-related events
+        if isinstance(frame, UserStartedSpeakingFrame):
+            logger.info("UserInputForwarder: user_started_speaking")
+            self._send_message({"type": "user_started_speaking"})
+            
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            logger.info("UserInputForwarder: user_stopped_speaking")
+            self._send_message({"type": "user_stopped_speaking"})
+            
+        elif isinstance(frame, TranscriptionFrame):
+            text = frame.text.strip() if frame.text else ""
+            if text:
+                logger.info(f"UserInputForwarder: transcription - {text}")
+                self._send_message({"type": "transcription", "text": text})
+        
+        # Always pass frame through
+        await self.push_frame(frame, direction)
+
+
+class LLMResponseForwarder(FrameProcessor):
+    """Forwards LLM response events to the client."""
+    
+    def __init__(self, send_message_callback: Callable, **kwargs):
+        super().__init__(**kwargs)
+        self._send_message = send_message_callback
+        self._current_response = ""
+        
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        
+        if isinstance(frame, TextFrame):
+            # Accumulate response text from LLM
+            if frame.text:
+                self._current_response += frame.text
+                logger.info(f"LLMResponseForwarder: TextFrame '{frame.text[:30]}...'")
+            
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            # Send complete response
+            logger.info(f"LLMResponseForwarder: LLMFullResponseEndFrame, response length={len(self._current_response)}")
+            if self._current_response.strip():
+                logger.info(f"LLMResponseForwarder: Sending response: {self._current_response[:100]}...")
+                self._send_message({"type": "response", "text": self._current_response.strip()})
+            self._current_response = ""
+            
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            logger.info("LLMResponseForwarder: bot_started_speaking")
+            self._send_message({"type": "bot_started_speaking"})
+            
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            logger.info("LLMResponseForwarder: bot_stopped_speaking")
+            self._send_message({"type": "bot_stopped_speaking"})
+        
+        # Always pass frame through
+        await self.push_frame(frame, direction)
+
+
 class EventForwarder(FrameProcessor):
     """Forwards pipeline events to the client via a callback (e.g., WebRTC data channel)."""
     
@@ -128,43 +192,50 @@ class EventForwarder(FrameProcessor):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         
+        frame_type = type(frame).__name__
+        
         # Handle different frame types and forward to client
         if isinstance(frame, UserStartedSpeakingFrame):
-            logger.debug("Event: user_started_speaking")
+            logger.info("EventForwarder: user_started_speaking")
             self._send_message({"type": "user_started_speaking"})
             
         elif isinstance(frame, UserStoppedSpeakingFrame):
-            logger.debug("Event: user_stopped_speaking")
+            logger.info("EventForwarder: user_stopped_speaking")
             self._send_message({"type": "user_stopped_speaking"})
             
         elif isinstance(frame, TranscriptionFrame):
             text = frame.text.strip() if frame.text else ""
             if text:
-                logger.debug(f"Event: transcription - {text[:50]}...")
+                logger.info(f"EventForwarder: transcription - {text}")
                 self._send_message({"type": "transcription", "text": text})
                 
         elif isinstance(frame, LLMMessagesFrame):
-            logger.debug("Event: llm_started")
+            logger.info("EventForwarder: llm_started (resetting response buffer)")
             self._send_message({"type": "llm_started"})
             self._current_response = ""
             
         elif isinstance(frame, TextFrame):
-            # Accumulate response text
-            self._current_response += frame.text
+            # Accumulate response text from LLM
+            logger.info(f"EventForwarder: TextFrame received: '{frame.text[:50] if frame.text else ''}...'")
+            if frame.text:
+                self._current_response += frame.text
             
         elif isinstance(frame, LLMFullResponseEndFrame):
             # Send complete response
+            logger.info(f"EventForwarder: LLMFullResponseEndFrame, response length={len(self._current_response)}")
             if self._current_response.strip():
-                logger.debug(f"Event: response - {self._current_response[:50]}...")
+                logger.info(f"EventForwarder: Sending response to client: {self._current_response[:100]}...")
                 self._send_message({"type": "response", "text": self._current_response.strip()})
+            else:
+                logger.warning("EventForwarder: No response accumulated to send!")
             self._current_response = ""
             
         elif isinstance(frame, BotStartedSpeakingFrame):
-            logger.debug("Event: bot_started_speaking")
+            logger.info("EventForwarder: bot_started_speaking")
             self._send_message({"type": "bot_started_speaking"})
             
         elif isinstance(frame, BotStoppedSpeakingFrame):
-            logger.debug("Event: bot_stopped_speaking")
+            logger.info("EventForwarder: bot_stopped_speaking")
             self._send_message({"type": "bot_stopped_speaking"})
         
         # Always pass frame through
@@ -277,17 +348,21 @@ async def create_pipeline(
     avatar_manager: AvatarManager,
     webrtc_connection=None,
     enable_video: bool = True
-) -> PipelineTask:
-    """Create the full conversation pipeline."""
+) -> tuple:
+    """Create the full conversation pipeline.
+    
+    Returns:
+        tuple: (PipelineTask, KokoroTTSService) - the task and TTS service for voice control
+    """
     logger.info("Creating conversation pipeline...")
     
-    # Speech-to-text
-    logger.debug(f"Creating GroqSTTService with API key: {config.groq_api_key[:10]}...")
+    # Speech-to-text (Groq - cloud based, fast)
+    logger.debug(f"Creating GroqSTTService...")
     stt = GroqSTTService(
         api_key=config.groq_api_key,
         model="whisper-large-v3"
     )
-    logger.debug("STT service created")
+    logger.debug("STT service created (Groq)")
     
     # LLM
     logger.debug(f"Creating OllamaLLMService with model: {config.ollama_model}")
@@ -348,33 +423,43 @@ async def create_pipeline(
     context_aggregator = llm.create_context_aggregator(context)
     logger.debug("Context aggregator created")
     
-    # Event forwarder for sending events to client via data channel
-    event_forwarder = None
+    # Event forwarders for sending events to client via data channel
+    user_input_forwarder = None
+    llm_response_forwarder = None
     if webrtc_connection:
         def send_to_client(message):
             try:
+                logger.info(f"Sending to client: {message}")
                 webrtc_connection.send_app_message(message)
+                logger.info(f"Successfully sent to client: {message.get('type', 'unknown')}")
             except Exception as e:
-                logger.warning(f"Failed to send message to client: {e}")
+                logger.error(f"Failed to send message to client: {e}", exc_info=True)
         
-        event_forwarder = EventForwarder(send_to_client)
-        logger.debug("Event forwarder created")
+        user_input_forwarder = UserInputForwarder(send_to_client)
+        llm_response_forwarder = LLMResponseForwarder(send_to_client)
+        logger.debug("Event forwarders created")
     
     # Build pipeline
     pipeline_processors = [
         transport.input(),          # Audio from user
     ]
     
-    # Add event forwarder early to catch all events
-    if event_forwarder:
-        pipeline_processors.append(event_forwarder)
+    pipeline_processors.append(stt)  # Speech to text
+    
+    # Add user input forwarder AFTER STT to capture transcriptions
+    if user_input_forwarder:
+        pipeline_processors.append(user_input_forwarder)
     
     pipeline_processors.extend([
-        stt,                        # Speech to text
         context_aggregator.user(),  # Add user message to context
         llm,                        # Generate response
-        tts,                        # Text to speech
     ])
+    
+    # Add LLM response forwarder AFTER LLM to capture responses
+    if llm_response_forwarder:
+        pipeline_processors.append(llm_response_forwarder)
+    
+    pipeline_processors.append(tts)  # Text to speech
     
     # Add video service if available
     if video_service:
@@ -399,4 +484,4 @@ async def create_pipeline(
     )
     
     logger.info("Pipeline task created successfully")
-    return task
+    return task, tts

@@ -104,13 +104,17 @@ class AIAvatarClient {
     
     async setVoice(voice) {
         try {
+            console.log(`Setting voice to: ${voice}`);
             const formData = new FormData();
             formData.append('voice', voice);
             
-            await fetch('/api/voice', {
+            const response = await fetch('/api/voice', {
                 method: 'POST',
                 body: formData
             });
+            
+            const result = await response.json();
+            console.log('Voice change response:', result);
             
             this.log(`Voice set to: ${voice}`);
         } catch (e) {
