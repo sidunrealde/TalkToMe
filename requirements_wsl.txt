@@ -1,0 +1,25 @@
+# WSL2-specific Python dependencies for TalkToMe
+# These extend requirements.txt with packages needed for Ditto + TensorRT on Linux.
+# Install with: pip install -r requirements_wsl.txt
+
+# --- Everything from base requirements.txt ---
+-r requirements.txt
+
+# --- Ditto additional deps (not in base requirements) ---
+filetype>=1.2.0            # Image/video file type detection (ditto loader)
+imageio>=2.33.0            # Image/video I/O (ditto loader/writer)
+scikit-image>=0.22.0       # Image processing utilities (ditto putback)
+Cython>=3.0.0              # Cython compiler for blend module (.pyx)
+einops>=0.7.0              # Tensor operations (ditto models)
+resampy>=0.4.0             # Audio resampling (16kHz for Ditto)
+
+# --- TensorRT + CUDA (WSL/Linux only) ---
+tensorrt>=10.0.0           # TensorRT runtime (pip wheels include libs)
+polygraphy>=0.49.0         # ONNX -> TensorRT conversion tool
+cuda-python<13             # CUDA Python bindings (v13 changed API)
+
+# --- WebRTC transport ---
+pipecat-ai[webrtc]         # Adds aiortc for WebRTC support
+
+# --- Kokoro TTS ---
+kokoro-onnx>=0.4.0         # Local TTS engine

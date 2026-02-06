@@ -187,7 +187,120 @@ New-NetFirewallRule -DisplayName "TalkToMe Avatar Server" -Direction Inbound -Lo
 
 ---
 
-## 📁 Project Structure
+## � WSL2 Setup (TensorRT Acceleration)
+
+For maximum performance, you can run TalkToMe inside **WSL2** with TensorRT-accelerated Ditto inference. This uses your Windows NVIDIA GPU via CUDA passthrough and gives ~3-5x faster frame generation than pure PyTorch.
+
+### Why WSL?
+
+- TensorRT pip wheels ship native Linux `.so` libraries — no separate SDK install needed
+- The Ditto pipeline uses a **hybrid mode**: 10 models run as TensorRT engines, while `warp_network` uses PyTorch (GridSample3D has no TRT support)
+- WSL2's native ext4 filesystem is ~10x faster than `/mnt/` for Python imports
+
+### Prerequisites
+
+| Requirement | Details |
+|---|---|
+| **WSL2** | Ubuntu 22.04+ (`wsl --install -d Ubuntu`) |
+| **NVIDIA Driver** | Installed on Windows (GPU passthrough automatic in WSL2) |
+| **Ollama** | Running on Windows with `OLLAMA_HOST=0.0.0.0:11434` |
+| **Checkpoints** | Already downloaded into `checkpoints/` (see Step 5 above) |
+| **Groq API Key** | For cloud STT — [console.groq.com](https://console.groq.com) |
+
+### One-Command Setup
+
+The `setup_wsl.sh` script handles everything automatically:
+
+```bash
+# Open a WSL terminal
+wsl
+
+# Navigate to the repo (mounted from Windows)
+cd /mnt/f/Projects/LLM/TalkToMe   # adjust to your path
+
+# Run setup
+chmod +x setup_wsl.sh
+./setup_wsl.sh
+```
+
+The script will:
+1. Install system packages (`python3-dev`, `ffmpeg`, `espeak-ng`, `build-essential`, etc.)
+2. Sync project files to `~/TalkToMe` on WSL's native filesystem
+3. Copy model checkpoints (ONNX, PyTorch, config files)
+4. Create a Python venv and install all dependencies (PyTorch CUDA 12.4, TensorRT, Pipecat, Kokoro, etc.)
+5. Pre-compile the Cython blend module
+6. Build TensorRT engines from ONNX models (~10-20 min on first run, skips existing)
+7. Copy `warp_network.pth` for hybrid mode
+8. Generate the TRT hybrid config pickle
+9. Auto-detect the Windows host IP and create `.env` with correct Ollama URL
+10. Create a `run.sh` convenience script
+11. Verify all dependencies
+
+### Ollama Setup for WSL
+
+WSL2 runs in a separate network namespace, so Ollama on Windows must listen on all interfaces:
+
+**Windows PowerShell (run once):**
+```powershell
+# Set Ollama to listen on all interfaces
+[System.Environment]::SetEnvironmentVariable('OLLAMA_HOST', '0.0.0.0:11434', 'User')
+
+# Restart Ollama (close tray icon, then reopen)
+```
+
+The setup script auto-detects the WSL→Windows gateway IP and configures `.env` accordingly.
+
+### Running the Server
+
+```bash
+# From WSL
+cd ~/TalkToMe
+
+# Foreground (see all logs)
+./run.sh
+
+# Background (survives terminal close)
+./run.sh --background
+
+# View background logs
+tail -f /tmp/talktome.log
+
+# Stop background server
+tmux kill-session -t talktome
+```
+
+Access from Windows Chrome: **http://localhost:8765**
+
+> **Note:** When running in WSL, use HTTP (not HTTPS). `localhost` is a secure context in Chrome, so microphone/WebRTC still works without SSL certificates.
+
+### Ditto Backend Modes
+
+The setup script auto-selects the best mode based on available files:
+
+| Mode | Config | Checkpoint Dir | Speed | Notes |
+|------|--------|----------------|-------|-------|
+| **TRT Hybrid** ⚡ | `v0.4_hubert_cfg_trt_hybrid_online.pkl` | `ditto_trt` | Fastest | 10 TRT engines + PyTorch warp |
+| PyTorch | `v0.4_hubert_cfg_pytorch.pkl` | `ditto_pytorch` | Slower | No TRT needed, works everywhere |
+| Full TRT | `v0.4_hubert_cfg_trt_online.pkl` | `ditto_trt` | Fastest | Requires GridSample3D TRT plugin |
+
+To switch modes, edit `~/TalkToMe/.env`:
+```env
+# TRT Hybrid (recommended)
+DITTO_CONFIG_PATH=checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_hybrid_online.pkl
+DITTO_CHECKPOINT_PATH=checkpoints/ditto_trt
+
+# PyTorch fallback
+# DITTO_CONFIG_PATH=checkpoints/ditto_cfg/v0.4_hubert_cfg_pytorch.pkl
+# DITTO_CHECKPOINT_PATH=checkpoints/ditto_pytorch
+```
+
+### Re-running Setup
+
+The script is safe to re-run — it reuses the existing venv, skips already-built TRT engines, and preserves your Groq API key in `.env`.
+
+---
+
+## �📁 Project Structure
 
 ```
 TalkToMe/
@@ -196,8 +309,10 @@ TalkToMe/
 │   ├── cert.pem
 │   └── key.pem
 ├── checkpoints/                # Model weights (gitignored)
+│   ├── ditto_cfg/              # Ditto config pickles
 │   ├── ditto_pytorch/          # PyTorch model files
-│   └── ditto_cfg/              # Configuration files
+│   ├── ditto_onnx/             # ONNX model files
+│   └── ditto_trt/              # TensorRT engines (built by setup_wsl.sh)
 ├── ditto/                      # Ditto TalkingHead submodule
 ├── src/
 │   ├── server.py               # FastAPI server + WebRTC signaling
@@ -206,14 +321,18 @@ TalkToMe/
 │   └── services/
 │       ├── ditto_realtime.py   # Real-time lip-sync service
 │       ├── kokoro_tts.py       # Kokoro TTS service
+│       ├── static_avatar.py    # Static avatar fallback
 │       └── avatar_manager.py   # Avatar image management
 ├── web/                        # Frontend (served as static files)
 │   ├── index.html
 │   ├── app.js
 │   └── styles.css
-├── .env                        # Environment variables
+├── setup_wsl.sh                # WSL2 one-command setup script
+├── requirements.txt            # Base Python dependencies
+├── requirements_wsl.txt        # WSL-specific extras (TRT, Cython, etc.)
 ├── .env.example                # Example environment config
-└── requirements.txt            # Python dependencies
+├── .gitattributes              # Line ending rules
+└── .gitignore
 ```
 
 ---
@@ -227,6 +346,9 @@ TalkToMe/
 | `GROQ_API_KEY` | Groq API key for STT | **Required** |
 | `OLLAMA_BASE_URL` | Ollama server URL | `http://localhost:11434` |
 | `OLLAMA_MODEL` | LLM model name | `mistral:7b` |
+| `DITTO_CONFIG_PATH` | Ditto config pickle | `checkpoints/ditto_cfg/v0.4_hubert_cfg_pytorch.pkl` |
+| `DITTO_CHECKPOINT_PATH` | Ditto model directory | `checkpoints/ditto_pytorch` |
+| `DITTO_REALTIME` | Enable real-time Ditto | `true` |
 | `HOST` | Server bind address | `0.0.0.0` |
 | `PORT` | Server port | `8765` |
 
@@ -284,6 +406,28 @@ ollama serve
 ollama list
 ollama pull mistral:7b
 ```
+
+### Ollama Connection Refused (WSL)
+WSL2 can't reach Windows `localhost`. Ollama must listen on all interfaces:
+```powershell
+# Windows PowerShell
+[System.Environment]::SetEnvironmentVariable('OLLAMA_HOST', '0.0.0.0:11434', 'User')
+# Then restart Ollama
+```
+The setup script auto-detects the gateway IP and writes it to `.env`.
+
+### Ditto "No module named 'filetype'" (or imageio, pyximport, etc.)
+Missing WSL-specific dependencies. Re-run the setup script:
+```bash
+cd /mnt/f/Projects/LLM/TalkToMe
+./setup_wsl.sh
+```
+Or install manually: `pip install -r requirements_wsl.txt`
+
+### TensorRT Engines Won't Build
+- Ensure `nvidia-smi` works inside WSL (`wsl nvidia-smi`)
+- Check that ONNX models exist in `checkpoints/ditto_onnx/`
+- Re-run `setup_wsl.sh` — it skips already-built engines
 
 ### "eye_info.py" IndexError
 This error occurs when MediaPipe cannot detect facial landmarks. Try:

@@ -81,7 +81,7 @@ class LMDM(nn.Module):
         return pred_noise, x_start
     
     def load_model(self, ckpt_path):
-        checkpoint = torch.load(ckpt_path, map_location='cpu')
+        checkpoint = torch.load(ckpt_path, map_location='cpu', weights_only=False)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.eval()
         return self

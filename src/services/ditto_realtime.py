@@ -10,16 +10,35 @@ import threading
 import queue
 import sys
 import os
+import platform
+import ctypes
 import numpy as np
 from typing import Optional, Callable
 import logging
 import cv2
 import time
 
-# Add TensorRT DLLs to PATH before importing anything that uses TRT
-TENSORRT_BIN = os.getenv("TENSORRT_BIN_PATH", r"F:\nvidia\TensorRT-10.15.1.29\bin")
-if TENSORRT_BIN not in os.environ.get("PATH", ""):
-    os.environ["PATH"] = TENSORRT_BIN + os.pathsep + os.environ.get("PATH", "")
+# Platform-specific TensorRT setup
+if platform.system() == "Windows":
+    # Add TensorRT DLLs to PATH on Windows
+    TENSORRT_BIN = os.getenv("TENSORRT_BIN_PATH", r"F:\nvidia\TensorRT-10.15.1.29\bin")
+    if TENSORRT_BIN not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = TENSORRT_BIN + os.pathsep + os.environ.get("PATH", "")
+else:
+    # Linux/WSL - Load GridSample3D plugin if available (only needed for full TRT mode)
+    PLUGIN_PATH = os.getenv("TENSORRT_PLUGIN_PATH", "")
+    if not PLUGIN_PATH:
+        _default = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                     "checkpoints/ditto_onnx/libgrid_sample_3d_plugin.so")
+        if os.path.exists(_default):
+            PLUGIN_PATH = _default
+    if PLUGIN_PATH and os.path.exists(PLUGIN_PATH):
+        try:
+            ctypes.CDLL(PLUGIN_PATH, mode=ctypes.RTLD_GLOBAL)
+            logging.info(f"Loaded TensorRT GridSample3D plugin: {PLUGIN_PATH}")
+        except Exception as e:
+            # Not fatal - hybrid mode uses PyTorch for warp_network instead
+            logging.debug(f"GridSample3D plugin not loaded (not needed for hybrid mode): {e}")
 
 from pipecat.frames.frames import (
     Frame,
@@ -398,7 +417,44 @@ class DittoRealtimeService(FrameProcessor):
         self._last_frame_time = 0
         self._frame_interval = 1.0 / fps
         
+        # Initialize SDK immediately during construction (don't wait for StartFrame)
+        # This ensures the SDK is ready when TTS audio arrives
+        self._sync_initialize_sdk()
+        
         logger.warning(f"DittoRealtimeService __init__ COMPLETE")
+    
+    def _sync_initialize_sdk(self):
+        """Initialize Ditto SDK synchronously during __init__."""
+        logger.warning("="*60)
+        logger.warning("DittoRealtimeService _sync_initialize_sdk() CALLED")
+        logger.warning(f"Config path: {self._config_path}")
+        logger.warning(f"Checkpoint path: {self._checkpoint_path}")
+        logger.warning(f"Source image: {self._source_image_path}")
+        logger.warning("="*60)
+        
+        try:
+            logger.warning("Creating RealtimeDittoSDK instance...")
+            self._sdk = RealtimeDittoSDK(
+                self._config_path,
+                self._checkpoint_path,
+                frame_callback=self._frame_callback
+            )
+            logger.warning("RealtimeDittoSDK instance created successfully")
+            
+            if self._source_image_path and os.path.exists(self._source_image_path):
+                logger.warning(f"Setting up avatar with image: {self._source_image_path}")
+                self._sdk.setup(self._source_image_path, online_mode=True, N_d=-1)
+                logger.warning("Avatar setup complete")
+            else:
+                logger.warning(f"Source image not found or not set: {self._source_image_path}")
+            
+            self._is_initialized = True
+            logger.warning("DittoRealtimeService fully initialized!")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Ditto: {e}", exc_info=True)
+            self._is_initialized = False
+            logger.error(f"Ditto initialization FAILED - _is_initialized={self._is_initialized}")
     
     def _frame_callback(self, frame: np.ndarray):
         """Callback for receiving generated frames from SDK."""
@@ -416,7 +472,11 @@ class DittoRealtimeService(FrameProcessor):
                 pass
     
     async def _initialize_sdk(self):
-        """Initialize Ditto SDK."""
+        """Initialize Ditto SDK (called on StartFrame, but may already be initialized)."""
+        if self._is_initialized and self._sdk:
+            logger.warning("DittoRealtimeService: SDK already initialized, skipping")
+            return
+            
         logger.warning("="*60)
         logger.warning("DittoRealtimeService _initialize_sdk() CALLED")
         logger.warning(f"Config path: {self._config_path}")
@@ -473,10 +533,8 @@ class DittoRealtimeService(FrameProcessor):
             logger.warning(f"DittoRealtimeService received: {frame_type}")
         
         if isinstance(frame, StartFrame):
-            # Initialize Ditto SDK when pipeline starts
-            logger.warning("DittoRealtimeService: StartFrame received, calling _initialize_sdk()")
-            await self._initialize_sdk()
-            logger.warning("DittoRealtimeService: _initialize_sdk() completed, pushing StartFrame")
+            # SDK is already initialized in __init__, just pass through StartFrame
+            logger.warning("DittoRealtimeService: StartFrame received (SDK already initialized)")
             await self.push_frame(frame, direction)
         
         elif isinstance(frame, EndFrame):

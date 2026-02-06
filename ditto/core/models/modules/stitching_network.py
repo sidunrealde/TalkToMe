@@ -41,7 +41,7 @@ class StitchingNetwork(nn.Module):
         return self.mlp(x)
     
     def load_model(self, ckpt_path):
-        checkpoint = torch.load(ckpt_path, map_location=lambda storage, loc: storage)
+        checkpoint = torch.load(ckpt_path, map_location=lambda storage, loc: storage, weights_only=False)
         self.load_state_dict(remove_ddp_dumplicate_key(checkpoint['retarget_shoulder']))
         self.eval()
         return self

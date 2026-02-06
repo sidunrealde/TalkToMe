@@ -19,13 +19,13 @@ class Config:
     tts_voice: str = "autumn"  # autumn, breeze, ember, juniper
     
     # Ditto Settings - Use TensorRT for real-time performance
-    # For TensorRT hybrid + ONNX hubert: "checkpoints/ditto_cfg/v0.4_hubert_cfg_hybrid_onnx.pkl" (TRT + ONNX warp + ONNX hubert)
-    # For TensorRT hybrid: "checkpoints/ditto_cfg/v0.4_hubert_cfg_hybrid.pkl" (TRT + ONNX warp)
-    # For TensorRT: "checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl" (requires custom plugin)
+    # For TRT+PyTorch hybrid (recommended): "checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_hybrid_online.pkl"
+    #   - Uses TRT for 10 models, PyTorch for warp_network (GridSample3D not supported in TRT/ONNX)
+    # For full TensorRT: "checkpoints/ditto_cfg/v0.4_hubert_cfg_trt_online.pkl" (requires GridSample3D TRT plugin)
     # For PyTorch: "checkpoints/ditto_cfg/v0.4_hubert_cfg_pytorch.pkl"
     ditto_config_path: str = os.getenv(
         "DITTO_CONFIG_PATH",
-        "checkpoints/ditto_cfg/v0.4_hubert_cfg_pytorch.pkl"  # PyTorch backend (GridSample3D works in PyTorch)
+        "checkpoints/ditto_cfg/v0.4_hubert_cfg_pytorch.pkl"  # Default: PyTorch (set via .env for TRT hybrid)
     )
     # For TensorRT: "checkpoints/ditto_trt" (after running conversion)
     # For ONNX: "checkpoints/ditto_onnx"

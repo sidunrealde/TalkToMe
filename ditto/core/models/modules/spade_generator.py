@@ -82,6 +82,6 @@ class SPADEDecoder(nn.Module):
         return x
     
     def load_model(self, ckpt_path):
-        self.load_state_dict(torch.load(ckpt_path, map_location=lambda storage, loc: storage))
+        self.load_state_dict(torch.load(ckpt_path, map_location=lambda storage, loc: storage, weights_only=False))
         self.eval()
         return self
