@@ -405,7 +405,9 @@ class DittoRealtimeService(FrameProcessor):
         checkpoint_path: str,
         source_image_path: str = None,
         fps: int = 25,
-        output_size: tuple = (512, 512),
+        output_size: tuple = (256, 256),
+        max_size: int = 512,  # Lower = faster processing
+        sampling_timesteps: int = 10,  # Lower = faster diffusion (default 50)
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -417,6 +419,8 @@ class DittoRealtimeService(FrameProcessor):
         logger.warning(f"  source_image_path: {source_image_path}")
         logger.warning(f"  fps: {fps}")
         logger.warning(f"  output_size: {output_size}")
+        logger.warning(f"  max_size: {max_size}")
+        logger.warning(f"  sampling_timesteps: {sampling_timesteps}")
         logger.warning("="*60)
         
         self._config_path = config_path
@@ -424,6 +428,8 @@ class DittoRealtimeService(FrameProcessor):
         self._source_image_path = source_image_path
         self._fps = fps
         self._output_size = output_size
+        self._max_size = max_size
+        self._sampling_timesteps = sampling_timesteps
         
         self._sdk: Optional[RealtimeDittoSDK] = None
         self._is_initialized = False
@@ -482,7 +488,13 @@ class DittoRealtimeService(FrameProcessor):
             logger.warning("RealtimeDittoSDK instance created successfully")
             
             logger.warning(f"Setting up avatar with image: {source_image_path}")
-            self._sdk.setup(source_image_path, online_mode=True, N_d=-1)
+            self._sdk.setup(
+                source_image_path, 
+                online_mode=True, 
+                N_d=-1,
+                max_size=self._max_size,
+                sampling_timesteps=self._sampling_timesteps,
+            )
             logger.warning("Avatar setup complete")
             
             self._is_initialized = True

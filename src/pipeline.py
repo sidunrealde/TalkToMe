@@ -397,7 +397,9 @@ async def create_pipeline(
                     checkpoint_path=config.ditto_checkpoint_path,
                     source_image_path=avatar_path,
                     fps=config.ditto_fps,
-                    output_size=(512, 512),
+                    output_size=(256, 256),  # Reduced for real-time performance
+                    max_size=512,  # Lower internal processing size
+                    sampling_timesteps=10,  # Faster diffusion (default 50)
                 )
                 logger.info("Ditto real-time service initialized")
             except Exception as e:
@@ -410,7 +412,7 @@ async def create_pipeline(
             video_service = StaticAvatarService(
                 source_image=avatar_manager.current_avatar,
                 fps=config.ditto_fps,
-                output_size=(512, 512),
+                output_size=(256, 256),  # Match Ditto output size
             )
             logger.info("Static avatar service initialized")
     elif enable_video and not has_avatar:
