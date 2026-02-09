@@ -61,6 +61,22 @@ if DITTO_PATH not in sys.path:
     sys.path.insert(0, DITTO_PATH)
 
 
+def _to_wsl_path(path: str) -> str:
+    """Convert Windows path to WSL path if running in WSL."""
+    if not path:
+        return path
+    # Check if we're on Linux (WSL) and path looks like a Windows path
+    if platform.system() != "Windows":
+        # Handle paths like F:\Projects\... or F:/Projects/...
+        if len(path) >= 3 and path[1] == ':' and path[2] in ('\\', '/'):
+            drive = path[0].lower()
+            rest = path[3:].replace('\\', '/')
+            wsl_path = f"/mnt/{drive}/{rest}"
+            logger.info(f"Converted Windows path to WSL: {path} -> {wsl_path}")
+            return wsl_path
+    return path
+
+
 class RealtimeDittoSDK:
     """
     Modified Ditto StreamSDK that outputs frames to a callback instead of file.
@@ -427,33 +443,55 @@ class DittoRealtimeService(FrameProcessor):
         """Initialize Ditto SDK synchronously during __init__."""
         logger.warning("="*60)
         logger.warning("DittoRealtimeService _sync_initialize_sdk() CALLED")
-        logger.warning(f"Config path: {self._config_path}")
-        logger.warning(f"Checkpoint path: {self._checkpoint_path}")
-        logger.warning(f"Source image: {self._source_image_path}")
+        
+        # Convert paths for WSL compatibility
+        config_path = _to_wsl_path(self._config_path)
+        checkpoint_path = _to_wsl_path(self._checkpoint_path)
+        source_image_path = _to_wsl_path(self._source_image_path) if self._source_image_path else None
+        
+        logger.warning(f"Config path: {config_path}")
+        logger.warning(f"Checkpoint path: {checkpoint_path}")
+        logger.warning(f"Source image: {source_image_path}")
+        
+        # Validate paths exist
+        if not config_path or not os.path.exists(config_path):
+            logger.error(f"Config file not found: {config_path}")
+            self._is_initialized = False
+            return
+        
+        if not checkpoint_path or not os.path.exists(checkpoint_path):
+            logger.error(f"Checkpoint path not found: {checkpoint_path}")
+            self._is_initialized = False
+            return
+        
+        if not source_image_path or not os.path.exists(source_image_path):
+            logger.error(f"Source image not found: {source_image_path}")
+            logger.error("Please upload an avatar image before starting a conversation.")
+            self._is_initialized = False
+            return
+        
         logger.warning("="*60)
         
         try:
             logger.warning("Creating RealtimeDittoSDK instance...")
             self._sdk = RealtimeDittoSDK(
-                self._config_path,
-                self._checkpoint_path,
+                config_path,
+                checkpoint_path,
                 frame_callback=self._frame_callback
             )
             logger.warning("RealtimeDittoSDK instance created successfully")
             
-            if self._source_image_path and os.path.exists(self._source_image_path):
-                logger.warning(f"Setting up avatar with image: {self._source_image_path}")
-                self._sdk.setup(self._source_image_path, online_mode=True, N_d=-1)
-                logger.warning("Avatar setup complete")
-            else:
-                logger.warning(f"Source image not found or not set: {self._source_image_path}")
+            logger.warning(f"Setting up avatar with image: {source_image_path}")
+            self._sdk.setup(source_image_path, online_mode=True, N_d=-1)
+            logger.warning("Avatar setup complete")
             
             self._is_initialized = True
-            logger.warning("DittoRealtimeService fully initialized!")
+            logger.warning("DittoRealtimeService fully initialized with TensorRT!")
             
         except Exception as e:
             logger.error(f"Failed to initialize Ditto: {e}", exc_info=True)
             self._is_initialized = False
+            self._sdk = None
             logger.error(f"Ditto initialization FAILED - _is_initialized={self._is_initialized}")
     
     def _frame_callback(self, frame: np.ndarray):
@@ -479,33 +517,40 @@ class DittoRealtimeService(FrameProcessor):
             
         logger.warning("="*60)
         logger.warning("DittoRealtimeService _initialize_sdk() CALLED")
-        logger.warning(f"Config path: {self._config_path}")
-        logger.warning(f"Checkpoint path: {self._checkpoint_path}")
-        logger.warning(f"Source image: {self._source_image_path}")
+        
+        # Convert paths for WSL compatibility
+        config_path = _to_wsl_path(self._config_path)
+        checkpoint_path = _to_wsl_path(self._checkpoint_path)
+        source_image_path = _to_wsl_path(self._source_image_path) if self._source_image_path else None
+        
+        logger.warning(f"Config path: {config_path}")
+        logger.warning(f"Checkpoint path: {checkpoint_path}")
+        logger.warning(f"Source image: {source_image_path}")
         logger.warning("="*60)
         
         try:
             logger.warning("Creating RealtimeDittoSDK instance...")
             self._sdk = RealtimeDittoSDK(
-                self._config_path,
-                self._checkpoint_path,
+                config_path,
+                checkpoint_path,
                 frame_callback=self._frame_callback
             )
             logger.warning("RealtimeDittoSDK instance created successfully")
             
-            if self._source_image_path and os.path.exists(self._source_image_path):
-                logger.warning(f"Setting up avatar with image: {self._source_image_path}")
-                self._sdk.setup(self._source_image_path, online_mode=True, N_d=-1)
+            if source_image_path and os.path.exists(source_image_path):
+                logger.warning(f"Setting up avatar with image: {source_image_path}")
+                self._sdk.setup(source_image_path, online_mode=True, N_d=-1)
                 logger.warning("Avatar setup complete")
             else:
-                logger.warning(f"Source image not found or not set: {self._source_image_path}")
+                logger.warning(f"Source image not found or not set: {source_image_path}")
             
             self._is_initialized = True
-            logger.warning("DittoRealtimeService fully initialized!")
+            logger.warning("DittoRealtimeService fully initialized with TensorRT!")
             
         except Exception as e:
             logger.error(f"Failed to initialize Ditto: {e}", exc_info=True)
             self._is_initialized = False
+            self._sdk = None
             logger.error(f"Ditto initialization FAILED - _is_initialized={self._is_initialized}")
     
     async def _cleanup(self):
@@ -533,8 +578,8 @@ class DittoRealtimeService(FrameProcessor):
             logger.warning(f"DittoRealtimeService received: {frame_type}")
         
         if isinstance(frame, StartFrame):
-            # SDK is already initialized in __init__, just pass through StartFrame
-            logger.warning("DittoRealtimeService: StartFrame received (SDK already initialized)")
+            # Log actual initialization state
+            logger.warning(f"DittoRealtimeService: StartFrame received (initialized={self._is_initialized}, sdk={self._sdk is not None})")
             await self.push_frame(frame, direction)
         
         elif isinstance(frame, EndFrame):

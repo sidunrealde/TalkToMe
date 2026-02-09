@@ -100,6 +100,7 @@ async def lifespan(app: FastAPI):
     
     # Load default avatar if available
     default_avatar_paths = [
+        "avatars/current_avatar.png",  # Previously uploaded avatar
         "avatars/default.png",
         "avatars/default.jpg",
         "ditto/example/image.png",  # Sample image from Ditto
