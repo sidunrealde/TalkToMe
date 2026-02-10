@@ -12,6 +12,7 @@ import sys
 import os
 import platform
 import ctypes
+import math
 import numpy as np
 from typing import Optional, Callable
 import logging
@@ -44,6 +45,8 @@ from pipecat.frames.frames import (
     Frame,
     OutputImageRawFrame,
     TTSAudioRawFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
     StartFrame,
     EndFrame,
     CancelFrame,
@@ -280,11 +283,19 @@ class RealtimeDittoSDK:
         
         frames = []
         
+        # Expected frame count using the same formula as wav2feat
+        expected_frames = math.ceil(len(audio_chunk) / 16000 * 25)
+        logger.warning(
+            f"process_audio_chunk: audio shape={audio_chunk.shape}, "
+            f"expected frames={expected_frames} "
+            f"(ceil({len(audio_chunk)}/16000*25))"
+        )
+        
         # Convert audio to features - one feature per frame at 25fps
         # For 16kHz audio, each feature represents 640 samples (40ms)
         aud_feat = self.wav2feat.wav2feat(audio_chunk, sr=16000)
         num_frames = len(aud_feat)
-        logger.warning(f"process_audio_chunk: audio shape={audio_chunk.shape}, features={num_frames}")
+        logger.warning(f"process_audio_chunk: wav2feat returned {num_frames} features")
         
         if num_frames == 0:
             return frames
@@ -311,6 +322,10 @@ class RealtimeDittoSDK:
             res_kp_seq = self.audio2motion(aud_cond, res_kp_seq)
             idx += valid_clip_len
         
+        logger.warning(
+            f"process_audio_chunk: res_kp_seq shape before trim={res_kp_seq.shape}"
+        )
+        
         # Trim to exact number of frames (one per audio feature)
         res_kp_seq = res_kp_seq[:, :num_frames]
         
@@ -322,18 +337,30 @@ class RealtimeDittoSDK:
         
         logger.warning(f"Generated {len(x_d_info_list)} motion frames for {num_frames} audio features")
         
-        # Generate video frames
+        # Generate video frames (never skip — use last good frame as fallback)
+        last_good_frame = None
+        failed_count = 0
         for gen_frame_idx, x_d_info in enumerate(x_d_info_list):
             frame_idx = self._mirror_index(gen_frame_idx, self.source_info_frames)
             ctrl_kwargs = self._get_ctrl_info(gen_frame_idx)
             
-            # Generate frame
             frame = self._generate_frame(frame_idx, x_d_info, ctrl_kwargs)
+            if frame is not None:
+                last_good_frame = frame
+            else:
+                failed_count += 1
+                frame = last_good_frame  # repeat previous frame
+            
             if frame is not None:
                 frames.append(frame)
                 if self.frame_callback:
                     self.frame_callback(frame)
         
+        if failed_count > 0:
+            logger.warning(
+                f"process_audio_chunk: {failed_count}/{len(x_d_info_list)} frames "
+                f"failed, used last-good fallback"
+            )
         logger.warning(f"process_audio_chunk: Generated {len(frames)} video frames")
         return frames
     
@@ -385,6 +412,9 @@ class RealtimeDittoSDK:
             self.local_idx = 0
             self.gen_frame_idx = 0
             self.item_buffer = np.zeros((0, self.wav2feat.feat_dim), dtype=np.float32)
+            # Reset audio2motion internal state so each batch starts clean
+            self.audio2motion.clip_idx = 0
+            self.audio2motion.kp_cond = self.audio2motion.s_kp_cond.copy()
     
     def close(self):
         """Cleanup resources."""
@@ -438,6 +468,11 @@ class DittoRealtimeService(FrameProcessor):
         self._lock = asyncio.Lock()
         self._last_frame_time = 0
         self._frame_interval = 1.0 / fps
+        
+        # Batch mode: buffer ALL TTS audio, generate ALL video, then play together
+        self._audio_buffer: list = []
+        self._is_buffering = False
+        self._batch_cancelled = False  # Set True to abort paced playback loop
         
         # Initialize SDK immediately during construction (don't wait for StartFrame)
         # This ensures the SDK is ready when TTS audio arrives
@@ -580,35 +615,44 @@ class DittoRealtimeService(FrameProcessor):
             self._sdk.setup(path, online_mode=True, N_d=-1)
     
     async def process_frame(self, frame: Frame, direction: FrameDirection):
-        """Process incoming frames."""
+        """Process incoming frames.
+        
+        Batch mode: buffers ALL TTS audio chunks, then on TTSStoppedFrame
+        generates ALL video frames from the complete audio and outputs
+        them interleaved with audio for perfect lip-sync.
+        """
         await super().process_frame(frame, direction)
         
         # Log all frame types for debugging
         frame_type = type(frame).__name__
-        if frame_type in ['StartFrame', 'EndFrame', 'CancelFrame', 'TTSAudioRawFrame', 
+        if frame_type in ['StartFrame', 'EndFrame', 'CancelFrame', 'TTSAudioRawFrame',
+                          'TTSStartedFrame', 'TTSStoppedFrame',
                           'BotStartedSpeakingFrame', 'BotStoppedSpeakingFrame', 'UserStartedSpeakingFrame']:
             logger.warning(f"DittoRealtimeService received: {frame_type}")
         
         if isinstance(frame, StartFrame):
-            # Log actual initialization state
             logger.warning(f"DittoRealtimeService: StartFrame received (initialized={self._is_initialized}, sdk={self._sdk is not None})")
             await self.push_frame(frame, direction)
         
         elif isinstance(frame, EndFrame):
-            # Cleanup
             await self._cleanup()
             await self.push_frame(frame, direction)
             
         elif isinstance(frame, CancelFrame):
-            # Cleanup
+            self._is_buffering = False
+            self._batch_cancelled = True
+            self._audio_buffer.clear()
             await self._cleanup()
             await self.push_frame(frame, direction)
         
         elif isinstance(frame, UserStartedSpeakingFrame):
+            # User interrupted – cancel any buffering / playback and reset
             self._is_speaking = False
+            self._is_buffering = False
+            self._batch_cancelled = True
+            self._audio_buffer.clear()
             if self._sdk:
                 self._sdk.reset()
-            # Clear frame queue
             while not self._frame_queue.empty():
                 try:
                     self._frame_queue.get_nowait()
@@ -622,38 +666,170 @@ class DittoRealtimeService(FrameProcessor):
             
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._is_speaking = False
-            # Output remaining frames
-            await self._flush_frames()
             await self.push_frame(frame, direction)
             
+        elif isinstance(frame, TTSStartedFrame):
+            # Begin buffering audio for batch video generation
+            self._audio_buffer.clear()
+            self._is_buffering = True
+            self._batch_cancelled = False
+            if self._sdk:
+                self._sdk.reset()
+            logger.warning("TTSStartedFrame: Beginning audio buffering for batch video generation")
+            await self.push_frame(frame, direction)
+        
         elif isinstance(frame, TTSAudioRawFrame):
-            # Calculate audio duration
-            audio_samples = len(frame.audio) // 2  # int16 = 2 bytes per sample
-            audio_duration = audio_samples / frame.sample_rate
-            
-            # Generate video frames FIRST (queues them up)
-            await self._process_tts_audio(frame)
-            
-            num_frames = self._frame_queue.qsize()
-            logger.warning(f"Audio duration={audio_duration:.2f}s, generated {num_frames} frames")
-            
-            if num_frames > 0:
-                # Frame interval = audio duration / number of frames = perfect sync
-                # This ensures video ends exactly when audio ends
-                frame_interval = audio_duration / num_frames
-                logger.warning(f"Outputting {num_frames} frames at {frame_interval*1000:.1f}ms intervals (video duration={num_frames * frame_interval:.2f}s)")
+            if self._is_buffering and self._is_initialized and self._sdk:
+                # Buffer audio – don't pass through yet
+                self._audio_buffer.append(frame)
+                logger.warning(f"Buffered audio chunk #{len(self._audio_buffer)} ({len(frame.audio)} bytes)")
             else:
-                frame_interval = 0.04  # 40ms default
-            
-            # Push audio and output video frames simultaneously
-            await asyncio.gather(
-                self.push_frame(frame, direction),
-                self._output_queued_frames(frame_interval)
-            )
+                # Not buffering or Ditto not available – pass audio through as-is
+                await self.push_frame(frame, direction)
+        
+        elif isinstance(frame, TTSStoppedFrame):
+            if self._audio_buffer and self._is_initialized and self._sdk:
+                logger.warning(f"TTSStoppedFrame: Batch processing {len(self._audio_buffer)} buffered audio chunks")
+                await self._batch_generate_and_output(direction)
+            self._is_buffering = False
+            self._audio_buffer.clear()
+            await self.push_frame(frame, direction)
             
         else:
             await self.push_frame(frame, direction)
     
+    async def _batch_generate_and_output(self, direction: FrameDirection):
+        """Generate ALL video frames first, then play back in sync.
+
+        How it works
+        ------------
+        1. Concatenate + resample audio, generate ALL Ditto video frames.
+        2. Push ALL original TTS audio chunks at once.  Pipecat's transport
+           already has a 3-layer buffering pipeline that paces audio delivery
+           at exactly the sample rate (10 ms wall-clock intervals inside the
+           aiortc RawAudioTrack).  We must NOT add our own sleeps between
+           audio pushes — that fights the transport and causes speed jitter.
+        3. Concurrently run a video-pacing loop that updates the current
+           video frame at 25 fps for exactly ``total_duration`` seconds.
+           The transport stores the latest OutputImageRawFrame and re-sends
+           it to the WebRTC peer at its own video clock rate (~30 fps).
+
+        Because audio and video are both wall-clock-paced by independent
+        mechanisms (transport for audio, our loop for video), they stay in
+        sync for arbitrarily long responses.
+        """
+        try:
+            # --- 1. Concatenate all buffered TTS audio ---
+            all_audio_bytes = b''.join(f.audio for f in self._audio_buffer)
+            sample_rate = self._audio_buffer[0].sample_rate
+            num_channels = self._audio_buffer[0].num_channels
+            all_audio_int16 = np.frombuffer(all_audio_bytes, dtype=np.int16)
+            total_samples = len(all_audio_int16)
+            total_duration = total_samples / sample_rate
+
+            logger.warning(
+                f"Batch: {total_samples} samples @ {sample_rate}Hz = "
+                f"{total_duration:.3f}s, {len(self._audio_buffer)} chunks"
+            )
+
+            # --- 2. Resample to 16 kHz for Ditto ---
+            audio_float = all_audio_int16.astype(np.float32) / 32768.0
+            if sample_rate != 16000:
+                import resampy
+                audio_16k = resampy.resample(audio_float, sample_rate, 16000)
+            else:
+                audio_16k = audio_float
+
+            target_frames = math.ceil(total_duration * self._fps)
+            logger.warning(f"Target video frames: {target_frames}")
+
+            # --- 3. Reset SDK and generate ALL video frames (blocking) ---
+            self._sdk.reset()
+            logger.warning("Generating ALL video frames…")
+            video_frames = await asyncio.to_thread(
+                self._sdk.process_audio_chunk, audio_16k
+            )
+            num_generated = len(video_frames)
+            logger.warning(
+                f"Ditto generated {num_generated} frames "
+                f"(target {target_frames})"
+            )
+
+            if num_generated == 0:
+                logger.warning("No video frames — pushing audio only")
+                for af in self._audio_buffer:
+                    await self.push_frame(af, direction)
+                return
+
+            # Pad to cover full audio duration
+            if num_generated < target_frames:
+                pad = target_frames - num_generated
+                video_frames.extend([video_frames[-1]] * pad)
+                logger.warning(f"Padded {pad} frames → {len(video_frames)}")
+
+            num_frames = len(video_frames)
+            frame_interval = total_duration / num_frames
+
+            if self._batch_cancelled:
+                return
+
+            # ------------------------------------------------------------------
+            # 4. Playback: push audio + pace video concurrently
+            # ------------------------------------------------------------------
+            # We capture the saved buffer list so we can iterate it inside the
+            # audio coroutine even after the instance attribute is cleared.
+            saved_audio_chunks = list(self._audio_buffer)
+
+            async def _push_audio():
+                """Push every original TTS chunk back-to-back.
+
+                The transport will chunk → 10 ms sub-chunk → pace at
+                sample-rate.  No sleeps here!
+                """
+                for af in saved_audio_chunks:
+                    if self._batch_cancelled:
+                        return
+                    await self.push_frame(af, direction)
+
+            async def _pace_video():
+                """Update the video frame at *self._fps* using wall-clock
+                scheduling so cumulative drift stays near zero."""
+                start = time.time()
+                for i in range(num_frames):
+                    if self._batch_cancelled:
+                        return
+                    # Sleep until this frame's scheduled time
+                    target = start + i * frame_interval
+                    now = time.time()
+                    if now < target:
+                        await asyncio.sleep(target - now)
+                    await self._output_video_frame(video_frames[i])
+
+                # Hold the last frame until total_duration elapses
+                end_target = start + total_duration
+                remaining = end_target - time.time()
+                if remaining > 0:
+                    await asyncio.sleep(remaining)
+
+                elapsed = time.time() - start
+                logger.warning(
+                    f"Video done: {num_frames} frames in {elapsed:.2f}s "
+                    f"(target {total_duration:.2f}s)"
+                )
+
+            logger.warning(
+                f"Starting playback — {num_frames} frames @ "
+                f"{frame_interval*1000:.1f}ms interval"
+            )
+            await asyncio.gather(_push_audio(), _pace_video())
+            logger.warning("Batch playback complete")
+
+        except Exception as e:
+            logger.error(f"Batch generate error: {e}", exc_info=True)
+            logger.warning("Falling back: pushing audio without video")
+            for af in self._audio_buffer:
+                await self.push_frame(af, direction)
+
     async def _process_tts_audio(self, audio_frame: TTSAudioRawFrame):
         """Process TTS audio and generate video frames."""
         logger.warning(f"_process_tts_audio CALLED - initialized={self._is_initialized}, sdk={self._sdk is not None}")

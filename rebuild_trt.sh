@@ -1,5 +1,6 @@
 #!/bin/bash
-# Rebuild TensorRT engines from ONNX models for TensorRT 10.3.0
+# Rebuild TensorRT engines from ONNX models in WSL
+# Must be run inside WSL on the target GPU to avoid platform mismatch errors
 cd /home/siddarthag/TalkToMe
 source venv/bin/activate
 
@@ -9,6 +10,11 @@ mkdir -p "$TRT_DIR"
 
 echo "=== Rebuilding TensorRT Engines ==="
 echo "TensorRT version: $(python3 -c 'import tensorrt; print(tensorrt.__version__)')"
+echo ""
+
+# Remove ALL existing .engine files so we force a clean rebuild
+echo "Removing old .engine files (platform mismatch protection)..."
+rm -f "$TRT_DIR"/*.engine
 echo ""
 
 # Models to build
