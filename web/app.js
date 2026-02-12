@@ -251,6 +251,23 @@ class AIAvatarClient {
         try {
             this.setStatus('connecting', '🔄 Connecting...');
             this.log('Starting WebRTC connection...');
+
+            // Fetch ICE configuration from server (includes TURN relay for WSL)
+            let iceConfig = {
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            };
+            try {
+                const iceResp = await fetch('/api/ice-config');
+                if (iceResp.ok) {
+                    iceConfig = await iceResp.json();
+                    this.log(`ICE config: ${iceConfig.iceTransportPolicy || 'all'} mode, ${iceConfig.iceServers?.length || 0} servers`);
+                    if (iceConfig.iceTransportPolicy === 'relay') {
+                        this.log('Using TURN relay (WSL2 mode)');
+                    }
+                }
+            } catch (e) {
+                this.log('Could not fetch ICE config, using defaults');
+            }
             
             // Get microphone access with noise suppression
             this.log('Requesting microphone access...');
@@ -269,12 +286,8 @@ class AIAvatarClient {
             // Setup audio level meter
             this.setupAudioMeter(this.localStream);
             
-            // Create peer connection
-            this.pc = new RTCPeerConnection({
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' }
-                ]
-            });
+            // Create peer connection with server-provided ICE config
+            this.pc = new RTCPeerConnection(iceConfig);
             
             // Add local audio track - this creates the sender for our mic
             const audioTrack = this.localStream.getAudioTracks()[0];
