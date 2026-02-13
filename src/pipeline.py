@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 class OllamaLLMService(FrameProcessor):
     """Simple Ollama LLM integration for Pipecat."""
     
+    # Keep system prompt + last N user/assistant pairs to avoid context snowball
+    MAX_CONTEXT_PAIRS = 1  # 1 exchange = minimal continuity, prevents rehashing
+    
     def __init__(self, base_url: str, model: str, **kwargs):
         super().__init__(**kwargs)
         self._base_url = base_url.rstrip("/")
@@ -46,6 +49,55 @@ class OllamaLLMService(FrameProcessor):
         self._generating = False
         self._cancelled = False
         logger.info(f"OllamaLLMService initialized with model: {model}")
+    
+    @staticmethod
+    def _trim_context(messages: list, max_pairs: int) -> list:
+        """Keep system prompt + minimal trimmed history + current user message.
+        
+        Also truncates old assistant messages so the model cannot copy
+        its own verbose style (the snowball effect), and injects a brief
+        constraint reminder right before the current user turn.
+        """
+        if not messages:
+            return messages
+
+        system = [m for m in messages if m.get("role") == "system"]
+        conversation = [m for m in messages if m.get("role") != "system"]
+
+        if not conversation:
+            return system
+
+        # The latest message is always the current user turn
+        current = conversation[-1]
+        history = conversation[:-1]
+
+        # Keep at most max_pairs exchanges from recent history
+        keep = max_pairs * 2
+        if len(history) > keep:
+            history = history[-keep:]
+
+        # Truncate old assistant replies so the model can't copy verbose style
+        trimmed_history = []
+        for m in history:
+            if m.get("role") == "assistant":
+                text = m.get("content", "")
+                if len(text) > 100:
+                    text = text[:100].rsplit(" ", 1)[0] + "..."
+                trimmed_history.append({"role": "assistant", "content": text})
+            else:
+                trimmed_history.append(m)
+
+        # Inject a brief constraint reminder so the model doesn't drift
+        reminder = {
+            "role": "system",
+            "content": (
+                "Reminder: Reply in 1-2 plain sentences only. "
+                "No emojis, no markdown, no greetings, no filler. "
+                "Answer ONLY the current question. Do not reference anything said before."
+            )
+        }
+
+        return system + trimmed_history + [reminder, current]
         
     def create_context_aggregator(self, context):
         """Create a context aggregator - simplified version."""
@@ -78,13 +130,23 @@ class OllamaLLMService(FrameProcessor):
         self._generating = True
         self._cancelled = False
         
+        # Trim context to avoid the LLM rehashing old exchanges
+        trimmed = self._trim_context(self._context, self.MAX_CONTEXT_PAIRS)
+        logger.debug(f"Context: {len(self._context)} msgs → trimmed to {len(trimmed)}")
+        
         try:
             response = await self._client.post(
                 f"{self._base_url}/api/chat",
                 json={
                     "model": self._model,
-                    "messages": self._context,
-                    "stream": True
+                    "messages": trimmed,
+                    "stream": True,
+                    "options": {
+                        "temperature": 0.7,
+                        "num_predict": 60,    # cap response length (~2 sentences)
+                        "repeat_penalty": 1.3, # penalise repeated tokens/phrases
+                        "repeat_last_n": 128,  # window for repeat penalty
+                    }
                 }
             )
             

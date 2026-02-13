@@ -35,17 +35,38 @@ def _load_personality(path: Path = PERSONALITY_PATH) -> dict:
 
 
 def _build_system_prompt(persona: dict) -> str:
-    """Assemble a system prompt from the personality dict sections."""
+    """Assemble a system prompt from the personality dict sections.
+    
+    The prompt is structured to front-load hard constraints (output format,
+    forbidden patterns) so the model sees them first, then softer personality.
+    """
     if not persona:
         return (
-            "You are a friendly AI assistant with a visual avatar. "
-            "Keep responses concise and conversational. "
-            "You can see the user and they can see you."
+            "You are a friendly AI assistant. Your output will be read aloud by a "
+            "text-to-speech engine. Keep responses to 1 or 2 sentences. Use only "
+            "plain English with basic punctuation. Never use emojis, markdown, "
+            "bullet points, or special characters."
         )
 
     parts: list[str] = []
 
-    # Name & tagline
+    # ── Hard constraints FIRST (output format / TTS rules) ──
+    parts.append(
+        "IMPORTANT: Your responses will be spoken aloud by a text-to-speech engine. "
+        "You MUST follow these output rules strictly:\n"
+        "- Respond in 1 to 2 short sentences only.\n"
+        "- Use ONLY plain English text with basic punctuation (periods, commas, "
+        "question marks, exclamation marks, apostrophes).\n"
+        "- NEVER output emojis, emoticons, asterisks, markdown, bullet points, "
+        "numbered lists, code blocks, hashtags, or any special characters.\n"
+        "- NEVER start with greetings like \"Hey there\" or filler like \"Sure,\" "
+        "\"Of course,\" \"Absolutely,\" or \"I can help with that.\"\n"
+        "- NEVER repeat, summarize, or reference previous messages. Each reply "
+        "must answer ONLY the current message as if it is the first thing said.\n"
+        "- Do not introduce yourself or describe what you can do unless explicitly asked."
+    )
+
+    # ── Identity ──
     name = persona.get("name", "Assistant")
     tagline = persona.get("tagline")
     if tagline:
@@ -57,19 +78,18 @@ def _build_system_prompt(persona: dict) -> str:
     traits = persona.get("personality")
     if traits:
         trait_list = ", ".join(traits)
-        parts.append(f"Your core personality traits: {trait_list}.")
+        parts.append(f"Your personality: {trait_list}.")
 
     # Backstory
     backstory = persona.get("backstory", "").strip()
     if backstory:
-        parts.append(f"Backstory:\n{backstory}")
+        parts.append(backstory)
 
-    # Instructions
+    # Additional instructions from YAML
     instructions = persona.get("instructions")
     if instructions:
-        parts.append("Behavioural instructions:")
         for instr in instructions:
-            parts.append(f"- {instr}")
+            parts.append(instr)
 
     return "\n\n".join(parts)
 
